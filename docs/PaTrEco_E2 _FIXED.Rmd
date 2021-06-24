@@ -1,0 +1,234 @@
+---
+title: "PaTrEco - EXERCISE 2"
+author: "Katjusa Mezek"
+date: "5/2/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Patterns and trends in environmental data - Exercise 2
+
+## Packages & data import
+
+```{r echo=T, results='hide',warning = FALSE, message = FALSE}
+# Load packages
+
+library(readr)        # to import tabular data (e.g. csv)
+library(dplyr)        # to manipulate (tabular) data
+library(ggplot2)      # to visualize data
+library(sf)           # to handle spatial vector data
+library(terra)        # To handle raster data
+library(lubridate)
+library(zoo)
+library(scales)
+
+# Import the Wildschwein data
+
+wildschwein_BE <- read_delim("wildschwein_BE_2056.csv",",") # adjust path
+
+wildschwein_BE <- st_as_sf(wildschwein_BE, coords = c("E", "N"), crs = 2056, remove = FALSE)
+
+```
+
+# Task 1 - Getting an overview
+
+```{r echo=T, results='hide',warning = FALSE, message = FALSE}
+# Calculate the time difference between subsequent rows
+
+wildschwein_BE <- group_by(wildschwein_BE,TierID) # group by TierID
+
+wildschwein_BE$timelag  <- as.numeric(difftime(lead(wildschwein_BE$DatetimeUTC), wildschwein_BE$DatetimeUTC),units = "secs")
+
+# turn timelag to integer
+
+wildschwein_BE$timelag = as.integer(wildschwein_BE$timelag)
+
+# A summary for individuals
+wildschwein_BE %>% 
+  group_by(TierID) %>%
+  summarise(
+    mean_timelag=mean(timelag, na.rm=T)
+  )
+
+```
+
+## Questions
+1.) How many individuals were tracked?
+```{r}
+unique(wildschwein_BE$TierName)
+unique(wildschwein_BE$TierID)
+
+#three individuals were tracked
+```
+
+2.) For how long were the individual tracked? Are there gaps?
+```{r}
+ggplot(wildschwein_BE, aes(x=wildschwein_BE$DatetimeUTC, y=wildschwein_BE$TierID)) +
+  geom_line()
+
+range_002A=range(wildschwein_BE$DatetimeUTC[wildschwein_BE$TierID=="002A"])
+range_016A=range(wildschwein_BE$DatetimeUTC[wildschwein_BE$TierID=="016A"])
+range_018A=range(wildschwein_BE$DatetimeUTC[wildschwein_BE$TierID=="018A"])
+
+# The animal 002A was tracked longer (Oct2014 - Jul2015) than 016A and 018A.
+# The start of the tracking is different for each animal (same day - 2014-11-07, but different time).
+#The tracking ended on different dates, as seen in the plot. The tracking of 018A and 022A ended on the same day but not same time
+
+```
+
+3.) Were all individuals tracked concurrently or sequentially?
+```{r}
+# The individuals were tracked concurrently because there is a large time area when they were all tracked at the same time between January 2015 and June 2015), but with slight delays.
+
+```
+
+4.) What is the temporal sampling interval between the locations?
+```{r}
+# The sampling interval can be interpreted as the time lag
+# it is approximately 900s (15 minutes)
+```
+
+# Task 2 - Deriving movement parameters I: Speed
+```{r echo=T, results='hide',warning = FALSE, message = FALSE}
+# Calculate Euclidean distance
+euc.dist = function(x,y) (sqrt((lead(x)-x)^2+(lead(y)-y)^2))
+
+wildschwein_BE$steplength= euc.dist(wildschwein_BE$E, wildschwein_BE$N)
+
+# Calculate speed between locations
+wildschwein_BE$Speed = wildschwein_BE$steplength/wildschwein_BE$timelag
+
+#The unit is in degrees/s (timelag is in seconds and steplength is in degrees, since it was calculated from the euclidean distance)
+#In order to get measurable distance we would need to take into account the earths curve and terrain - haversine
+
+```
+
+# Task 3 - Cross-scale movement analysis
+
+```{r echo=T, echo=T, results='hide',warning = FALSE, message = FALSE}
+
+# data import
+caro <- read_delim("caro60.csv",",")
+caro <- st_as_sf(caro, coords = c("E", "N"), crs = 2056, remove = FALSE)
+
+#reduce granularity of sampling interval by selecting every 3, 6 and 9th row 
+caro_3 = caro[seq(from = 1, to = 200, by = 3),] 
+caro_6 = caro[seq(from = 1, to = 200, by = 6),]
+caro_9 = caro[seq(from = 1, to = 200, by = 9),]
+
+nrow(caro)
+nrow(caro_3)
+nrow(caro_6)
+nrow(caro_9)
+
+#calculate timelag, steplength and speed for all caro datasets
+
+#caro
+caro$timelag  <- as.numeric(difftime(lead(caro$DatetimeUTC), caro$DatetimeUTC),units = "secs")
+caro$steplength= euc.dist(caro$E, caro$N)
+caro$Speed = caro$steplength/caro$timelag
+
+#caro_3
+caro_3$timelag  <- as.numeric(difftime(lead(caro_3$DatetimeUTC), caro_3$DatetimeUTC),units = "secs")
+caro_3$steplength= euc.dist(caro_3$E, caro_3$N)
+caro_3$Speed = caro_3$steplength/caro_3$timelag
+
+# caro_6
+caro_6$timelag  <- as.numeric(difftime(lead(caro_6$DatetimeUTC), caro_6$DatetimeUTC),units = "secs")
+caro_6$steplength= euc.dist(caro_6$E, caro_6$N)
+caro_6$Speed = caro_6$steplength/caro_6$timelag
+
+# caro_9
+caro_9$timelag  <- as.numeric(difftime(lead(caro_9$DatetimeUTC), caro_9$DatetimeUTC),units = "secs")
+caro_9$steplength= euc.dist(caro_9$E, caro_9$N)
+caro_9$Speed = caro_9$steplength/caro_9$timelag
+
+#make one data frame
+caro_13=rbind(caro,caro_3)
+caro_13$Trajectory=c(replicate(200, "1 minute"), replicate(67,"3 minutes"))
+
+caro_16=rbind(caro,caro_6)
+caro_16$Trajectory=c(replicate(200, "1 minute"), replicate(34,"6 minutes"))
+
+caro_19=rbind(caro,caro_9)
+caro_19$Trajectory=c(replicate(200, "1 minute"), replicate(23,"9 minutes"))
+
+caro_all=rbind(caro, caro_3 , caro_6, caro_9)
+caro_all$Trajectory=c(replicate(200, "1 minute"), replicate(67,"3 minutes"), replicate(34,"6 minutes"),replicate(23,"9 minutes")  )
+
+# visual comparisons to original
+#plot caro 3 compared to caro
+ggplot(caro_13, aes(y=N, x=E, col=Trajectory) ) +
+  geom_path()+ geom_point()
+
+#plot caro 6 compared to caro
+ggplot(caro_16, aes(y=N, x=E, col=Trajectory) ) +
+  geom_path()+ geom_point()
+
+#plot caro 9 compared to caro
+ggplot(caro_19, aes(y=N, x=E, col=Trajectory) ) +
+  geom_path()+ geom_point()
+
+#plot all caro datasets with different granularities
+ggplot(caro_all, aes(y=N, x=E, col=Trajectory) ) +
+  geom_path()+ geom_point()
+
+#compare derived speed at different sampling intervals
+#preprocessing 
+caro_all$Time <- format(as.POSIXlt(caro_all$DatetimeUTC, "%Y-%m-%d %H:%M:%S", tz = "UTC"), format = "%H:%M")
+str(caro)
+
+ggplot(caro_all, aes(Time,Speed, col = Trajectory, group = 1)) + geom_line()
+
+#fix y scale
+caro_all$Time <- format(as.POSIXct(caro_all$DatetimeUTC, "%Y-%m-%d %H:%M:%S", tz = "UTC"), format = "%H:%M")
+caro_all$Time = strptime(caro_all$Time, format = "%H:%M" )
+caro_all$Time = as.POSIXct(caro_all$Time, format = "%H:%M")
+
+str(caro_all)
+
+# plot derived speed at different sampling intervals
+ggplot(caro_all, aes(Time,Speed, col = Trajectory, group = 1)) + geom_line() +
+  scale_x_datetime(breaks = date_breaks("1 hour"), labels=date_format("%H:%M:%S"))+
+  theme_minimal() + ggtitle("Comparing derived speed at different sampling intervals")
+ 
+```
+
+The plots in this exercise indicate that granularity effects the results. The lineplot shows the speeds at different granularities (1,3,6 and 9 minutes). The higher granularity line (eg. sampling every 1 minute) shows ore noisiness while lower granularity (eg. every 9 minutes) shows allot less noisiness in the data. If the granularity is too low (9 minutes) some peaks are lost, as seen in the plot. The same is seen in the plotted trajectory maps. 
+
+# Task 4 - Deriving movement parameters II: Rolling window functions
+```{r,echo=T, results='hide',warning = FALSE, message = FALSE}
+# demo 
+example <- rnorm(10)
+rollmean(example,k = 3,fill = NA,align = "left")
+##  [1]  0.93634335  0.31709038  0.02370048  0.67869801  0.73369105  0.50401344
+##  [7] -0.56144365 -0.56902598          NA          NA
+rollmean(example,k = 4,fill = NA,align = "left")
+##  [1]  0.6775521  0.2045005  0.5848215  0.5255629  0.3446928  0.1459635
+##  [7] -0.4102301         NA         NA         NA
+
+# A higher k - smoother data
+
+# Run rollmean on caro
+caro$Speedk3=rollmean(caro$Speed,k = 3,fill = NA,align = "left")
+caro$Speedk5=rollmean(caro$Speed,k = 5,fill = NA,align = "left")
+
+# Make long data
+library(tidyr)
+caro_long <- gather(caro, key = k_value , value = Speed, Speed:Speedk5, factor_key = TRUE) 
+
+caro_long$Time <- format(as.POSIXlt(caro_long$DatetimeUTC, "%Y-%m-%d %H:%M:%S", tz = "UTC"), format = "%H:%M")
+
+# Data preprocessing
+caro_long$k_value=as.factor(caro_long$k_value)
+caro_long$Time = strptime(caro_long$Time, format = "%H:%M" )
+caro_long$Time = as.POSIXct(caro_long$Time, format = "%H:%M")
+
+#visualize speed
+ggplot(caro_long, aes(Time, Speed,col=k_value, group = 1)) + geom_line()+
+  scale_x_datetime(breaks = date_breaks("1 hour"), labels=date_format("%H:%M:%S"))+
+  theme_minimal() + ggtitle("Comparing different window sizes (k-values)")
+```
